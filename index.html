@@ -250,7 +250,7 @@ select:focus, input[type=number]:focus { outline: none; border-color: var(--blue
 input[type=number] { width: 70px; }
 
 /* ── ADMIN LOGIN ── */
-#adminLogin { position: fixed; inset: 0; z-index: 999; background: rgba(13,13,26,0.4); backdrop-filter: blur(12px); display: flex; align-items: flex-end; justify-content: center; padding: 20px; opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
+#adminLogin { position: fixed; inset: 0; z-index: 8000; background: rgba(13,13,26,0.4); backdrop-filter: blur(12px); display: flex; align-items: flex-end; justify-content: center; padding: 20px; opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
 #adminLogin.show { opacity: 1; pointer-events: auto; }
 .login-sheet { background: var(--white); border-radius: 28px 28px 20px 20px; padding: 36px; width: 100%; max-width: 420px; box-shadow: var(--shadow-lg); transform: translateY(40px); transition: transform 0.4s cubic-bezier(0.4,0,0.2,1); }
 #adminLogin.show .login-sheet { transform: translateY(0); }
