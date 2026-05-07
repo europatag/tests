@@ -842,13 +842,12 @@ async function init() {
     if (loadCancelled) return;
 
     setLoadProgress(100, 'Fertig!');
-    await new Promise(r => setTimeout(r, 400));
     if (loadCancelled) return;
 
   } catch(e) {
     if (loadCancelled) return;
     setLoadProgress(100, 'Fehler – fortfahren…');
-    await new Promise(r => setTimeout(r, 600));
+    await new Promise(r => setTimeout(r, 400));
   }
 
   if (loadCancelled) return;
@@ -1222,14 +1221,17 @@ async function timerExpiredEnd() {
   await setStatus('closed');
 }
 
-async function timerExpiredContinue() {
-  hideTimerExpiredModal();
-  // Clear countdown
-  state.countdownEnd = null;
-  await saveConfig();
-  document.getElementById('countdownInput').value = '';
-  document.getElementById('headerCountdown').classList.remove('visible');
-  showToast('▶ Abstimmung läuft weiter');
+// ══════════════════════════════════════════════
+//  ERROR HELPER
+// ══════════════════════════════════════════════
+function friendlyError(e) {
+  const msg = (e && e.message) ? e.message : String(e);
+  if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed to fetch')) return 'Keine Verbindung – bitte Internetverbindung prüfen.';
+  if (msg.includes('duplicate') || msg.includes('unique')) return 'Dieser Eintrag existiert bereits.';
+  if (msg.includes('permission') || msg.includes('403') || msg.includes('401')) return 'Keine Berechtigung für diese Aktion.';
+  if (msg.includes('timeout') || msg.includes('408')) return 'Zeitüberschreitung – Server antwortet nicht.';
+  if (msg.includes('500') || msg.includes('502') || msg.includes('503')) return 'Serverfehler – bitte kurz warten und erneut versuchen.';
+  return 'Etwas ist schiefgelaufen – bitte erneut versuchen.';
 }
 
 // ══════════════════════════════════════════════
@@ -1249,57 +1251,64 @@ async function saveConfig(extra = {}) {
 }
 
 async function setStatus(s) {
-  const ctrl = showOpOverlay(
-    s === 'open' ? '▶' : s === 'closed' ? '⏹' : '⏸',
-    s === 'open' ? 'Abstimmung wird gestartet…' : s === 'closed' ? 'Abstimmung wird beendet…' : 'Pause wird gesetzt…',
-    'Verbindung mit Server…'
-  );
+  const icons  = { open: '▶', closed: '⏹', waiting: '⏸' };
+  const labels = { open: 'Abstimmung wird gestartet…', closed: 'Abstimmung wird beendet…', waiting: 'Abstimmung wird pausiert…' };
+  const ctrl = showOpOverlay(icons[s] || '⏳', labels[s] || 'Status wird gesetzt…', 'Verbindung mit Server…');
+  const prevStatus = state.status;
   try {
     state.status = s;
     await saveConfig({ status: s });
-    if (ctrl.cancelled) return;
+    if (ctrl.cancelled) { state.status = prevStatus; return; }
     hideOpOverlay();
     renderStatus();
     renderVoteGrid();
     if (s === 'closed') showResultsOverlay();
     if (s !== 'closed') hideResultsOverlay();
-    showToast({ open: '▶ Abstimmung gestartet', closed: '⏹ Beendet', waiting: '⏸ Pausiert' }[s] || 'Status gesetzt');
+    const toasts = { open: '▶ Abstimmung gestartet', closed: '⏹ Abstimmung beendet', waiting: '⏸ Pausiert' };
+    showToast(toasts[s] || 'Status aktualisiert');
   } catch(e) {
-    if (!ctrl.cancelled) {
-      hideOpOverlay();
-      showToast('Fehler: ' + e.message);
-    }
+    state.status = prevStatus;
+    if (!ctrl.cancelled) { hideOpOverlay(); showToast('⚠ ' + friendlyError(e)); }
   }
 }
 
 async function resetVotes() {
-  if (!confirm('Alle Stimmen löschen und neue Abstimmungsrunde starten?\nAlle Geräte können danach erneut abstimmen.')) return;
-  const ctrl = showOpOverlay('🔄', 'Stimmen werden gelöscht…', 'Bitte warten, alle Einträge werden entfernt');
+  if (!confirm('Alle Stimmen löschen und Abstimmung zurücksetzen?\n\nDer Status wird auf „Noch nicht gestartet" gesetzt. Alle Teilnehmer können danach neu abstimmen.')) return;
+  const ctrl = showOpOverlay('🔄', 'Abstimmung wird zurückgesetzt…', 'Alle Stimmen werden gelöscht');
   try {
     await sbFetch('votes?voted_at=gte.1970-01-01', 'DELETE');
     if (ctrl.cancelled) return;
+
+    // Reset vollständig: Status, Countdown, Stimmen, Token
     state.votes = {};
     state.votedCount = 0;
     for (let i = 1; i <= state.optionCount; i++) state.votes[i] = 0;
+    state.status = 'waiting';
+    state.countdownEnd = null;
+    timerExpiredShown = false;
+
     const newToken = crypto.randomUUID();
     state.resetToken = newToken;
     state.hasVoted = false;
     state.myVote = null;
     const fp = getFingerprint();
     localStorage.removeItem('aegVoted_' + fp);
-    await saveConfig({ resetToken: newToken });
+
+    await saveConfig({ status: 'waiting', resetToken: newToken, countdownEnd: null });
     if (ctrl.cancelled) return;
+
     hideOpOverlay();
+    // Alle UI-Elemente synchronisieren
+    document.getElementById('countdownInput').value = '';
+    document.getElementById('headerCountdown').classList.remove('visible');
+    renderStatus();
     renderChart();
     renderVoteGrid();
     updateAdminStats();
     hideResultsOverlay();
-    showToast('🔄 Zurückgesetzt – alle können neu abstimmen');
+    showToast('🔄 Zurückgesetzt – Abstimmung ist gestoppt, alle können neu abstimmen');
   } catch(e) {
-    if (!ctrl.cancelled) {
-      hideOpOverlay();
-      showToast('Fehler: ' + e.message);
-    }
+    if (!ctrl.cancelled) { hideOpOverlay(); showToast('⚠ ' + friendlyError(e)); }
   }
 }
 
@@ -1315,22 +1324,26 @@ async function saveOptionCount() {
     await saveConfig();
     if (ctrl.cancelled) return;
     hideOpOverlay();
-    renderVoteGrid(); renderChart();
+    renderVoteGrid();
+    renderChart();
     showToast('💾 ' + state.optionCount + ' Gerichte gespeichert');
   } catch(e) {
-    if (!ctrl.cancelled) { hideOpOverlay(); showToast('Fehler: ' + e.message); }
+    if (!ctrl.cancelled) { hideOpOverlay(); showToast('⚠ ' + friendlyError(e)); }
   }
 }
 
 async function addManualVotes() {
   const opt = parseInt(document.getElementById('manualOption').value);
   const cnt = parseInt(document.getElementById('manualCount').value) || 1;
-  if (isNaN(opt)) { showToast('Gericht auswählen'); return; }
-  const ctrl = showOpOverlay('➕', `${cnt} Stimme${cnt !== 1 ? 'n' : ''} werden hinzugefügt…`, `Gericht ${opt} · ${cnt} Einträge werden gespeichert`);
+  if (isNaN(opt) || opt < 1) { showToast('⚠ Bitte ein gültiges Gericht auswählen'); return; }
+  if (cnt < 1 || cnt > 50) { showToast('⚠ Anzahl muss zwischen 1 und 50 liegen'); return; }
+  const ctrl = showOpOverlay('➕', `${cnt} Stimme${cnt !== 1 ? 'n' : ''} werden hinzugefügt…`, `Gericht ${opt} · Einträge werden gespeichert`);
   try {
     const rows = Array.from({length: cnt}, (_, i) => ({
-      option: opt, browser_fp: 'manual_' + Date.now() + '_' + i,
-      ip_address: 'manual', session_id: 'manual_' + crypto.randomUUID(),
+      option: opt,
+      browser_fp: 'manual_' + Date.now() + '_' + i,
+      ip_address: 'manual',
+      session_id: 'manual_' + crypto.randomUUID(),
       voted_at: new Date().toISOString()
     }));
     await sbFetch('votes', 'POST', rows, { headers: { 'Prefer': 'return=minimal' } });
@@ -1338,17 +1351,21 @@ async function addManualVotes() {
     await loadVotes();
     if (ctrl.cancelled) return;
     hideOpOverlay();
-    renderChart(); updateAdminStats();
-    showToast(`➕ ${cnt} Stimme(n) für Gericht ${opt}`);
+    renderChart();
+    renderResultsOverlay();
+    updateAdminStats();
+    showToast(`➕ ${cnt} Stimme${cnt !== 1 ? 'n' : ''} für Gericht ${opt} hinzugefügt`);
   } catch(e) {
-    if (!ctrl.cancelled) { hideOpOverlay(); showToast('Fehler: ' + e.message); }
+    if (!ctrl.cancelled) { hideOpOverlay(); showToast('⚠ ' + friendlyError(e)); }
   }
 }
 
 async function saveCountdown() {
   const val = document.getElementById('countdownInput').value;
-  if (!val) { showToast('Bitte Datum/Zeit auswählen'); return; }
-  state.countdownEnd = new Date(val).toISOString();
+  if (!val) { showToast('⚠ Bitte Datum und Uhrzeit auswählen'); return; }
+  const end = new Date(val);
+  if (end <= new Date()) { showToast('⚠ Der Zeitpunkt liegt in der Vergangenheit'); return; }
+  state.countdownEnd = end.toISOString();
   timerExpiredShown = false;
   const ctrl = showOpOverlay('⏱', 'Countdown wird gesetzt…', 'Wird mit allen Teilnehmern synchronisiert');
   try {
@@ -1358,12 +1375,14 @@ async function saveCountdown() {
     tickCountdown();
     showToast('⏱ Countdown gesetzt');
   } catch(e) {
-    if (!ctrl.cancelled) { hideOpOverlay(); showToast('Fehler: ' + e.message); }
+    state.countdownEnd = null;
+    if (!ctrl.cancelled) { hideOpOverlay(); showToast('⚠ ' + friendlyError(e)); }
   }
 }
 
 async function clearCountdown() {
   state.countdownEnd = null;
+  timerExpiredShown = false;
   const ctrl = showOpOverlay('✕', 'Countdown wird gelöscht…', '');
   try {
     await saveConfig();
@@ -1373,7 +1392,24 @@ async function clearCountdown() {
     document.getElementById('headerCountdown').classList.remove('visible');
     showToast('Countdown entfernt');
   } catch(e) {
-    if (!ctrl.cancelled) { hideOpOverlay(); showToast('Fehler: ' + e.message); }
+    if (!ctrl.cancelled) { hideOpOverlay(); showToast('⚠ ' + friendlyError(e)); }
+  }
+}
+
+async function timerExpiredContinue() {
+  hideTimerExpiredModal();
+  state.countdownEnd = null;
+  timerExpiredShown = false;
+  const ctrl = showOpOverlay('▶', 'Abstimmung läuft weiter…', 'Countdown wird entfernt');
+  try {
+    await saveConfig();
+    if (ctrl.cancelled) return;
+    hideOpOverlay();
+    document.getElementById('countdownInput').value = '';
+    document.getElementById('headerCountdown').classList.remove('visible');
+    showToast('▶ Abstimmung läuft weiter – Countdown entfernt');
+  } catch(e) {
+    if (!ctrl.cancelled) { hideOpOverlay(); showToast('⚠ ' + friendlyError(e)); }
   }
 }
 
@@ -1408,11 +1444,18 @@ function renderAdminPanel() {
   const panel = document.getElementById('adminPanel');
   panel.style.display = 'block';
   panel.style.animation = 'slideUp 0.5s cubic-bezier(0.4,0,0.2,1) both';
-  updateManualSelect(); updateAdminStats();
+  updateManualSelect();
+  updateAdminStats();
   document.getElementById('optionSlider').value = state.optionCount;
   document.getElementById('optionVal').textContent = state.optionCount;
   document.getElementById('adminBar').style.display = 'none';
-  // Show admin back button in results if present
+  // Countdown-Feld mit aktuellem Wert befüllen falls gesetzt
+  if (state.countdownEnd) {
+    const dt = new Date(state.countdownEnd);
+    const pad = n => String(n).padStart(2, '0');
+    const local = `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+    document.getElementById('countdownInput').value = local;
+  }
   const adminBack = document.getElementById('roAdminBack');
   if (adminBack) adminBack.style.display = 'flex';
 }
