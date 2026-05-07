@@ -62,10 +62,7 @@ body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--t
   flex-direction: column;
   align-items: center; justify-content: center;
   gap: 0;
-  transition: opacity 0.5s ease;
 }
-#realLoader.visible { display: flex; }
-#realLoader.fade-out { opacity: 0; pointer-events: none; }
 .rl-logo { font-family: 'Fraunces', serif; font-size: 1.1rem; font-weight: 700; color: var(--blue); letter-spacing: 0.5px; margin-bottom: 40px; display: flex; align-items: center; gap: 10px; }
 .rl-title { font-family: 'Fraunces', serif; font-size: 1.5rem; font-weight: 900; color: var(--text); margin-bottom: 6px; text-align: center; }
 .rl-sub { font-size: 0.88rem; color: var(--text-mid); margin-bottom: 32px; font-weight: 300; text-align: center; }
@@ -671,16 +668,23 @@ function selectOrient(o) {
 function confirmOrient() {
   if (!selectedOrient) return;
   document.body.classList.add(selectedOrient);
+
+  // Show loader IMMEDIATELY without waiting for picker fade
+  const loader = document.getElementById('realLoader');
+  loader.style.display = 'flex';
+  loader.style.opacity = '0';
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    loader.style.transition = 'opacity 0.3s ease';
+    loader.style.opacity = '1';
+  }));
+
+  // Fade picker out simultaneously
   const picker = document.getElementById('orientPicker');
-  picker.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+  picker.style.transition = 'opacity 0.35s ease';
   picker.style.opacity = '0';
-  picker.style.transform = 'scale(1.04)';
-  setTimeout(() => {
-    picker.style.display = 'none';
-    // Show real loader
-    document.getElementById('realLoader').classList.add('visible');
-    init();
-  }, 420);
+  setTimeout(() => { picker.style.display = 'none'; }, 360);
+
+  init();
 }
 
 // ══════════════════════════════════════════════
@@ -696,26 +700,34 @@ function setLoadProgress(pct, stepText) {
 
 function cancelLoad() {
   loadCancelled = true;
-  // Restart from orientation picker
-  document.getElementById('realLoader').classList.remove('visible');
+  const loader = document.getElementById('realLoader');
+  loader.style.transition = 'opacity 0.3s ease';
+  loader.style.opacity = '0';
+  setTimeout(() => { loader.style.display = 'none'; loader.style.opacity = ''; loader.style.transition = ''; }, 300);
+
   document.body.classList.remove('portrait', 'landscape');
   selectedOrient = null;
   document.querySelectorAll('.op-card').forEach(c => c.classList.remove('selected'));
   document.getElementById('opContinue').classList.remove('visible');
-  document.getElementById('orientPicker').style.display = 'flex';
-  document.getElementById('orientPicker').style.opacity = '1';
-  document.getElementById('orientPicker').style.transform = '';
-  // Stop polling if started
+  const picker = document.getElementById('orientPicker');
+  picker.style.display = 'flex';
+  picker.style.opacity = '0';
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    picker.style.transition = 'opacity 0.3s ease';
+    picker.style.opacity = '1';
+  }));
   if (pollInterval) clearInterval(pollInterval);
   if (countdownInterval) clearInterval(countdownInterval);
 }
 
 function hideRealLoader() {
   const loader = document.getElementById('realLoader');
-  loader.classList.add('fade-out');
+  loader.style.transition = 'opacity 0.5s ease';
+  loader.style.opacity = '0';
   setTimeout(() => {
-    loader.classList.remove('visible');
-    loader.classList.remove('fade-out');
+    loader.style.display = 'none';
+    loader.style.opacity = '';
+    loader.style.transition = '';
   }, 500);
 }
 
@@ -1471,9 +1483,11 @@ async function checkAdminPw() {
   const correctHash = await hashPassword('Tiger123!abc');
   if (hash === correctHash) {
     state.isAdmin = true;
+    // Save callback BEFORE closeAdminLogin nulls it
+    const cb = loginCallback;
     closeAdminLogin();
-    if (loginCallback) {
-      loginCallback();
+    if (cb) {
+      cb();
     } else {
       renderAdminPanel();
       const welcome = document.createElement('div');
