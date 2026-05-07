@@ -1431,13 +1431,27 @@ function openAdminLoginFromClosed() {
   // From the closed screen, after login → show admin with results
   loginCallback = () => {
     document.getElementById('closedScreen').classList.remove('show');
-    showMainApp();
-    startPolling();
+    // selectedOrient may not be set yet if closed screen appeared before app init
+    // Force the app visible with whatever layout was chosen (default portrait if unknown)
+    const app = document.getElementById('app');
+    if (!selectedOrient) {
+      selectedOrient = window.innerWidth >= 900 ? 'landscape' : 'portrait';
+      document.body.classList.add(selectedOrient);
+    }
+    app.style.display = selectedOrient === 'landscape' ? 'grid' : 'flex';
     renderStatus();
     renderVoteGrid();
     renderChart();
     renderAdminPanel();
+    startCountdownDisplay();
+    startPolling();
     showResultsOverlay();
+    // Welcome flash
+    const welcome = document.createElement('div');
+    welcome.className = 'admin-welcome';
+    welcome.innerHTML = `<div class="admin-welcome-inner"><div class="aw-icon">⚙️</div><h3>Willkommen, Admin!</h3><p>Dashboard wird geladen…</p></div>`;
+    document.body.appendChild(welcome);
+    setTimeout(() => welcome.remove(), 2200);
   };
   const modal = document.getElementById('adminLogin');
   modal.classList.add('show');
